@@ -4,10 +4,13 @@ import sys
 import docker
 import nginx
 
+CONTAINER_IMG = "tomcat:alpine"
+NETWORK_NAME = "reverse-proxy"
 
-def start_containers(client, image, name):
+
+def start_containers(client, name):
     print("Starting up container : {}".format(name))
-    client.containers.run(image, detach=True, name=name)
+    client.containers.run(CONTAINER_IMG, network=NETWORK_NAME, detach=True, name=name)
 
 
 def reload_nginx(client):
@@ -23,7 +26,7 @@ def reload_nginx(client):
         container.stop()
         container.remove()
 
-    client.containers.run("reverseproxy:latest", ports={'80/tcp': '8080'},
+    client.containers.run("reverseproxy:latest", network=NETWORK_NAME, detach=True, ports={'8080/tcp': '8080'},
                           name="reverseproxy")
     print("Reload of nginx successful")
 
@@ -32,7 +35,7 @@ def create_image(client, path, name):
     client.images.build(path=path, tag=name)
 
 
-def modify_conf(contain_name):
+def modify_conf(container_name):
     config = nginx.loadf(os.path.join(os.path.abspath(os.path.dirname(__file__)), "resources/nginx.conf"))
     upstream = nginx.Upstream('docker-' + container_name, nginx.Key('server', 'tomcat:8080'))
     location = nginx.Location("/" + container_name, nginx.Key('rewrite', '^/' + container_name + '/(.*) /$1 break'),
@@ -59,12 +62,19 @@ def modify_conf(contain_name):
     nginx.dumpf(config, os.path.join(os.path.abspath(os.path.dirname(__file__)), "resources/nginx.conf"))
 
 
-CONTAINER_IMG = "tomcat:alpine"
+def check_and_create_network(client):
+    networks = client.networks.list(names=[NETWORK_NAME])
+    print(networks)
+    if len(networks) == 0:
+        client.networks.create(name=NETWORK_NAME, driver="bridge", scope="local")
+
+
 client = docker.from_env()
 container_name = sys.argv[1]
 print(container_name)
+check_and_create_network(client)
 if container_name in client.containers.list():
     raise Exception('Container name already exist : {}'.format(container_name))
-start_containers(client, CONTAINER_IMG, container_name)
+start_containers(client, container_name)
 modify_conf(container_name)
 reload_nginx(client)
